@@ -120,3 +120,7 @@ last night" beats any severity ranking. State lives in
 ## Schedule
 
 See `packaging/` for a systemd user timer. Stdlib only, no dependencies.
+
+## License
+
+Apache-2.0. See `LICENSE` and `NOTICE`.
