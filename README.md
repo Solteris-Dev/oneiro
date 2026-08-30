@@ -93,6 +93,29 @@ pipeline is exactly this shape, waiting for something to drive it.
 **Contradiction detection.** Requires reading for meaning. Plugs in alongside the
 deterministic checks: same `Store` in, same `Finding` list out.
 
+A rule that holds when it lands: **semantics may propose; only deterministic
+rules may classify as safe.** A model can say "these two memories conflict"; it
+must never say "so I'll fix it." Otherwise the apply-gate belongs to the
+component most capable of being confidently wrong, firing at 4am unattended.
+`autofix` stays keyed on finding *kind*, forever.
+
+Semantic findings should also be tuned for precision over recall and quote both
+memories verbatim. Thirty maybes a night and you stop reading the report — and a
+report you don't read is worse than none, because you'll believe your memory is
+audited.
+
+## Reading the report
+
+The top line states a **consequence**, not a count — "2 memories are invisible to
+recall" rather than "2 index-drift". A long report gets skimmed, so the line that
+survives skimming has to be the one that matters. It escalates: structural
+problems outrank rot, rot outranks housekeeping.
+
+Findings seen on a previous run are remembered, so anything new is marked
+**NEW**. That's the best triage signal there is — on a busy store, "3 new since
+last night" beats any severity ranking. State lives in
+`$XDG_STATE_HOME/oneiro/`; `--no-state` disables it and leaves no trace.
+
 ## Schedule
 
 See `packaging/` for a systemd user timer. Stdlib only, no dependencies.

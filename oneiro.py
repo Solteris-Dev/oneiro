@@ -22,6 +22,7 @@ Stdlib only.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -301,6 +302,50 @@ def check_overlap(store: Store, threshold: float) -> list[Finding]:
     return out
 
 
+def fingerprint(f: Finding) -> str:
+    """Identity of a finding across runs, so last night's report can be diffed
+    against tonight's. Deliberately excludes wording that drifts with time (a
+    staleness detail counts days), keeping the identity stable while the text
+    changes."""
+    import hashlib
+
+    detail = re.sub(r"\d+", "#", f.detail)
+    return hashlib.sha256(f"{f.kind}\0{f.where}\0{detail}".encode()).hexdigest()[:16]
+
+
+def state_path(store: Store) -> Path:
+    import hashlib
+
+    base = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local/state")
+    key = hashlib.sha256(str(store.root).encode()).hexdigest()[:12]
+    return Path(base) / "oneiro" / f"{store.kind}-{key}.json"
+
+
+def load_seen(store: Store) -> set[str]:
+    """Fingerprints reported on a previous night."""
+    path = state_path(store)
+    if not path.is_file():
+        return set()
+    try:
+        return set(json.loads(path.read_text()).get("seen", []))
+    except (json.JSONDecodeError, OSError):
+        return set()  # a corrupt state file must not stop the pass
+
+
+def save_seen(store: Store, findings: list[Finding]) -> None:
+    path = state_path(store)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "store": str(store.root),
+        "kind": store.kind,
+        "last_run": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "seen": sorted(fingerprint(f) for f in findings),
+    }
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    os.replace(tmp, path)
+
+
 def analyse(store: Store, stale_days: int, overlap: float) -> list[Finding]:
     findings = (
         check_index_drift(store)
@@ -316,18 +361,54 @@ def analyse(store: Store, stale_days: int, overlap: float) -> list[Finding]:
 SEVERITY_LABEL = {0: "wrong", 1: "rotting", 2: "consider"}
 
 
-def render(store: Store, findings: list[Finding], took: float) -> str:
+def headline(findings: list[Finding], new: set[str]) -> str:
+    """One line stating consequence, not counts.
+
+    A long report gets skimmed, so the top line has to survive skimming. Say what
+    happens if it is ignored — the way a permission prompt says "this deletes
+    your disk" rather than printing the command and hoping.
+    """
+    unrecalled = [f for f in findings if f.kind == "index-drift" and f.autofix]
+    dangling = [f for f in findings if f.kind == "index-drift" and not f.autofix]
+    if unrecalled:
+        n = len(unrecalled)
+        return (f"**{n} {'memory is' if n == 1 else 'memories are'} invisible to recall** — "
+                f"on disk but missing from the index, so {'it' if n == 1 else 'they'} will never load.")
+    if dangling:
+        n = len(dangling)
+        return f"**{n} index {'entry points' if n == 1 else 'entries point'} at {'a file' if n == 1 else 'files'} that no longer exist.**"
+    broken = [f for f in findings if f.kind == "broken-link"]
+    if broken:
+        return f"**{len(broken)} broken {'link' if len(broken) == 1 else 'links'}** between memories."
+    if new:
+        return f"**{len(new)} new since the last pass**, nothing structurally wrong."
+    return "**Nothing urgent** — housekeeping only."
+
+
+def render(store: Store, findings: list[Finding], took: float,
+           seen: set[str] | None = None) -> str:
     today = time.strftime("%Y-%m-%d")
+    seen = seen or set()
+    new = {fingerprint(f) for f in findings} - seen
     lines = [f"# dream {today}", ""]
     if not findings:
-        lines += [f"{len(store.memories)} memories in `{store.kind}`. Nothing to report — the store is tidy.", ""]
+        n = len(store.memories)
+        lines += [f"{n} {'memory' if n == 1 else 'memories'} in `{store.kind}`. "
+                  "Nothing to report — the store is tidy.", ""]
         return "\n".join(lines)
 
     counts: dict[str, int] = {}
     for f in findings:
         counts[f.kind] = counts.get(f.kind, 0) + 1
     summary = " · ".join(f"{n} {k}" for k, n in sorted(counts.items()))
-    lines += [f"{len(store.memories)} memories in `{store.kind}` · {summary}", ""]
+    count = len(store.memories)
+    lines += [
+        headline(findings, new),
+        "",
+        f"{count} {'memory' if count == 1 else 'memories'} in `{store.kind}` · {summary}"
+        + (f" · {len(new)} new since last pass" if new and seen else ""),
+        "",
+    ]
 
     for sev in (0, 1, 2):
         group = [f for f in findings if f.severity == sev]
@@ -338,7 +419,10 @@ def render(store: Store, findings: list[Finding], took: float) -> str:
         for f in group:
             where = f"`{f.where}` — " if f.where else ""
             mark = " _(safe to apply)_" if f.autofix else ""
-            lines.append(f"- {where}{f.detail}{mark}")
+            # Only mark novelty once there's a baseline; on a first run everything
+            # is technically new, which would make the flag meaningless.
+            flag = " **NEW**" if seen and fingerprint(f) in new else ""
+            lines.append(f"- {where}{f.detail}{mark}{flag}")
         lines.append("")
 
     safe = sum(1 for f in findings if f.autofix)
@@ -421,6 +505,9 @@ def main() -> int:
                     help="flag memories untouched for this long (default: 45)")
     ap.add_argument("--overlap", type=float, default=0.55,
                     help="vocabulary overlap that marks a merge candidate, 0-1 (default: 0.55)")
+    ap.add_argument("--no-state", action="store_true",
+                    help="don't read or write the seen-findings state, so nothing "
+                         "is marked NEW and the run leaves no trace")
     ap.add_argument("--export-prompt", action="store_true",
                     help="print a prompt to hand to an agent whose memory isn't on "
                          "this disk (Gemini, browser Claude, GPT); save its reply and "
@@ -439,11 +526,15 @@ def main() -> int:
     started = time.time()
     store = ADAPTERS[kind](root)
     findings = analyse(store, args.stale_days, args.overlap)
-    report = render(store, findings, time.time() - started)
+    seen = set() if args.no_state else load_seen(store)
+    report = render(store, findings, time.time() - started, seen)
 
     if args.report == "stdout":
         print(report, end="")
         return 0
+
+    if not args.no_state:
+        save_seen(store, findings)
 
     written = [str(write_file(report, store))]
     if args.report in ("sticky", "both"):
