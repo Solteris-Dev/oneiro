@@ -197,6 +197,22 @@ The memory, in full.
 """
 
 
+def project_key(path: Path) -> str:
+    """Claude Code's project key for a directory: the path with separators and
+    dots flattened to hyphens (`/home/u/.claude` -> `-home-u--claude`)."""
+    return re.sub(r"[/.]", "-", str(path))
+
+
+def default_store() -> str:
+    """Audit the memory belonging to the directory you're standing in.
+
+    Claude Code keys memory by working directory, so this is the store that a
+    session started here would actually load — which makes the no-argument case
+    mean something on any machine, rather than on one developer's.
+    """
+    return f"claude:{project_key(Path.cwd())}"
+
+
 def resolve_store(spec: str) -> tuple[str, Path]:
     """`claude:<project-key>`, `codex`, or `<adapter>:<path>`."""
     home = Path.home()
@@ -493,8 +509,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("store", nargs="?", default="claude:-home-solteris",
-                    help="claude:<project-key>, codex, or <adapter>:<path>")
+    ap.add_argument("store", nargs="?", default=None,
+                    help="claude:<project-key>, codex, or <adapter>:<path> "
+                         "(default: the Claude Code memory for the current directory)")
     ap.add_argument("--report", choices=["sticky", "file", "both", "stdout"], default="sticky",
                     help="where the report goes. 'sticky' also writes the canonical file, "
                          "and skips the sticky silently when waynote is absent (default: sticky)")
@@ -518,7 +535,7 @@ def main() -> int:
         print(EXPORT_PROMPT, end="")
         return 0
 
-    kind, root = resolve_store(args.store)
+    kind, root = resolve_store(args.store or default_store())
     if not store_target_exists(kind, root):
         print(f"oneiro: no store at {root}", file=sys.stderr)
         return 1

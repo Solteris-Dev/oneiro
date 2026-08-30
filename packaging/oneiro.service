@@ -5,4 +5,5 @@ Documentation=https://github.com/Solteris-Dev/oneiro
 [Service]
 Type=oneshot
 # Read-only over the memory store; writes only the report.
-ExecStart=%h/Repos/oneiro/oneiro.py claude:-home-solteris
+WorkingDirectory=%h
+ExecStart=%h/Repos/oneiro/oneiro.py

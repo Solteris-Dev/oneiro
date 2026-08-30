@@ -15,7 +15,8 @@ finding is addressed to you, and applying one is your job.
 ## Run it
 
 ```sh
-./oneiro.py claude:-home-solteris          # a Claude Code project's memory
+./oneiro.py                                # memory for the current directory
+./oneiro.py claude:-home-you               # a specific Claude Code project
 ./oneiro.py codex                          # ~/.codex/memories
 ./oneiro.py claude-code:/path/to/memory    # any directory
 ./oneiro.py portable:export.md             # an agent that isn't on this disk
