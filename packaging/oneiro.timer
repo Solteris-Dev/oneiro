@@ -2,11 +2,12 @@
 Description=Run oneiro nightly
 
 [Timer]
-# The dream. Late enough to catch the whole day, with a spread so it never
-# lands at the same instant as everything else on the machine.
-OnCalendar=*-*-* 04:30:00
+# The dream. Late enough to catch the whole day, early enough that the user is
+# plausibly asleep — 04:30 was not, on the evidence. The spread keeps it off the
+# same instant as everything else on the machine.
+OnCalendar=*-*-* 06:00:00
 RandomizedDelaySec=30m
-# If the machine was asleep at 04:30, run at next boot rather than skipping.
+# If the machine was off at that hour, run at next boot rather than skipping.
 Persistent=true
 
 [Install]
