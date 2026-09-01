@@ -348,7 +348,7 @@ def load_seen(store: Store) -> set[str]:
         return set()  # a corrupt state file must not stop the pass
 
 
-def save_seen(store: Store, findings: list[Finding]) -> None:
+def save_seen(store: Store, findings: list[Finding], sticky: Path | None = None) -> None:
     path = state_path(store)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -356,6 +356,9 @@ def save_seen(store: Store, findings: list[Finding]) -> None:
         "kind": store.kind,
         "last_run": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "seen": sorted(fingerprint(f) for f in findings),
+        # Only ever the sticky WE wrote, so superseding can never touch a note
+        # the user made.
+        "last_sticky": str(sticky) if sticky else None,
     }
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2))
@@ -468,6 +471,17 @@ def new_ulid() -> str:
     return out + tail
 
 
+def previous_sticky(store: Store) -> Path | None:
+    path = state_path(store)
+    if not path.is_file():
+        return None
+    try:
+        prev = json.loads(path.read_text()).get("last_sticky")
+    except (json.JSONDecodeError, OSError):
+        return None
+    return Path(prev) if prev else None
+
+
 def write_sticky(report: str, notes_dir: Path) -> Path | None:
     """Best-effort: drop the report on the desktop as a waynote sticky.
 
@@ -522,6 +536,9 @@ def main() -> int:
                     help="flag memories untouched for this long (default: 45)")
     ap.add_argument("--overlap", type=float, default=0.55,
                     help="vocabulary overlap that marks a merge candidate, 0-1 (default: 0.55)")
+    ap.add_argument("--sticky-always", action="store_true",
+                    help="write the desktop sticky even when there is nothing to "
+                         "report (default: only when there are findings)")
     ap.add_argument("--no-state", action="store_true",
                     help="don't read or write the seen-findings state, so nothing "
                          "is marked NEW and the run leaves no trace")
@@ -550,15 +567,27 @@ def main() -> int:
         print(report, end="")
         return 0
 
-    if not args.no_state:
-        save_seen(store, findings)
-
-    written = [str(write_file(report, store))]
-    if args.report in ("sticky", "both"):
+    written, sticky = [str(write_file(report, store))], None
+    if args.report in ("sticky", "both") and (findings or args.sticky_always):
+        # Supersede our own previous sticky rather than stacking one per night.
+        # A pile of identical "nothing to report" notes is the alert fatigue this
+        # tool exists to prevent, so producing it would be self-defeating. Only a
+        # path we recorded writing is ever removed.
+        old = previous_sticky(store)
         sticky = write_sticky(report, args.notes_dir)
+        if sticky and old and old != sticky and old.is_file():
+            try:
+                old.unlink()
+            except OSError:
+                pass
         if sticky:
             written.append(str(sticky))
-    print(f"oneiro: {len(findings)} finding(s); wrote {', '.join(written)}")
+
+    if not args.no_state:
+        save_seen(store, findings, sticky or previous_sticky(store))
+
+    quiet = "" if findings else " (no sticky — nothing to report)"
+    print(f"oneiro: {len(findings)} finding(s){quiet}; wrote {', '.join(written)}")
     return 0
 
 
