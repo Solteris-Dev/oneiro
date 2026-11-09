@@ -6,4 +6,4 @@ Documentation=https://github.com/Solteris-Dev/oneiro
 Type=oneshot
 # Read-only over the memory store; writes only the report.
 WorkingDirectory=%h
-ExecStart=%h/Repos/oneiro/oneiro.py
+ExecStart=%h/Repos/ai-code/oneiro/oneiro.py
